@@ -1,0 +1,19 @@
+[project]
+name = "final"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115.12",
+    "llama-index>=0.12.30",
+    "llama-index-embeddings-huggingface>=0.5.3",
+    "llama-index-llms-ollama>=0.5.4",
+    "llama-index-vector-stores-qdrant>=0.6.0",
+    "pandas>=2.2.3",
+    "psycopg2-binary>=2.9.10",
+    "qdrant-client>=1.13.3",
+    "redis>=6.0.0",
+    "sqlalchemy>=2.0.40",
+    "uvicorn>=0.34.1",
+]

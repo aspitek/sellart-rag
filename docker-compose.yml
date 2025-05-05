@@ -1,0 +1,46 @@
+version: '3.8'
+
+services:
+  api:
+    build:
+      context: .         # chemin vers le dossier contenant ton Dockerfile
+      dockerfile: Dockerfile  # facultatif si le fichier s'appelle 'Dockerfile'
+    container_name: sellart-rag-api
+    ports:
+      - "8000:8000"
+    environment:
+      - DB_URI=postgresql+psycopg2://admin:admin%402025@147.79.114.72:31432/sellart
+      - QDRANT_HOST=host.docker.internal
+      - QDRANT_PORT=6333
+      - COLLECTION_NAME=sellart_artworks
+      - EMBEDDING_MODEL=sentence-transformers/all-MiniLM-L6-v2
+      - LLM_MODEL=llama3.2
+      - REDIS_HOST=host.docker.internal
+      - REDIS_PORT=6379
+      - REDIS_DB=0
+      - OLLAMA_BASE_URL=http://host.docker.internal:11434
+    depends_on:
+      - redis
+      - qdrant
+    networks:
+      - sellart_net
+
+  redis:
+    image: redis:7.4
+    container_name: sellart-redis
+    ports:
+      - "6379:6379"
+    networks:
+      - sellart_net
+
+  qdrant:
+    image: qdrant/qdrant
+    container_name: sellart-qdrant
+    ports:
+      - "6333:6333"
+    networks:
+      - sellart_net
+
+networks:
+  sellart_net:
+    driver: bridge
