@@ -1,0 +1,10 @@
+llama-index
+llama-index-vector-stores-qdrant
+llama-index-llms-ollama
+llama-index-embeddings-huggingface
+qdrant-client
+sqlalchemy
+psycopg2-binary
+pandas
+fastapi
+uvicorn
