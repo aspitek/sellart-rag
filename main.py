@@ -1,6 +1,7 @@
 from fastapi import FastAPI, Request
 from pydantic import BaseModel
 from config import *
+from fastapi.middleware.cors import CORSMiddleware
 from llama_index.core import StorageContext, load_index_from_storage
 from llama_index.vector_stores.qdrant import QdrantVectorStore
 from llama_index.embeddings.huggingface import HuggingFaceEmbedding
@@ -17,6 +18,15 @@ redis_client = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, db=REDIS_DB, decode
 
 # === FastAPI ===
 app = FastAPI()
+
+# === CORS setup ===
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Autoriser toutes les origines
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # === Moteur RAG ===
 embed_model = HuggingFaceEmbedding(model_name=EMBEDDING_MODEL)
@@ -78,4 +88,4 @@ async def chat(input: ChatInput):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app)
+    uvicorn.run(app, host="0.0.0.0")

@@ -10,12 +10,12 @@ services:
       - "8000:8000"
     environment:
       - DB_URI=postgresql+psycopg2://admin:admin%402025@147.79.114.72:31432/sellart
-      - QDRANT_HOST=host.docker.internal
+      - QDRANT_HOST=qdrant
       - QDRANT_PORT=6333
       - COLLECTION_NAME=sellart_artworks
       - EMBEDDING_MODEL=sentence-transformers/all-MiniLM-L6-v2
       - LLM_MODEL=llama3.2
-      - REDIS_HOST=host.docker.internal
+      - REDIS_HOST=redis
       - REDIS_PORT=6379
       - REDIS_DB=0
       - OLLAMA_BASE_URL=http://host.docker.internal:11434

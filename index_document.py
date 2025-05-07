@@ -9,7 +9,7 @@ from qdrant_client.models import VectorParams, Distance
 from config import *
 
 def extract_data():
-    engine = create_engine(DB_URI)
+    engine = create_engine("postgresql+psycopg2://admin:admin%402025@147.79.114.72:31432/sellart")
     query = """
     SELECT a.id, a.price, a.description, s.name AS style, u.name AS artist, u.country
     FROM art_works a
@@ -47,22 +47,22 @@ def index_documents():
         return
 
     documents = build_documents(df)
-    embed_model = HuggingFaceEmbedding(model_name=EMBEDDING_MODEL)
+    embed_model = HuggingFaceEmbedding(model_name="sentence-transformers/all-MiniLM-L6-v2")
 
     # Création de la collection Qdrant
-    qdrant_client = QdrantClient(host=QDRANT_HOST, port=QDRANT_PORT)
+    qdrant_client = QdrantClient(host="localhost", port=6333)
     vector_size = len(embed_model.get_text_embedding("test"))
     vector_params = VectorParams(size=vector_size, distance=Distance.COSINE)
 
-    if qdrant_client.collection_exists(COLLECTION_NAME):
-        qdrant_client.delete_collection(COLLECTION_NAME)
-        print(f"🗑️ Deleted collection: {COLLECTION_NAME}")
+    if qdrant_client.collection_exists("sellart_artworks"):
+        qdrant_client.delete_collection("sellart_artworks")
+        print(f"🗑️ Deleted collection: {"sellart_artworks"}")
 
-    qdrant_client.create_collection(collection_name=COLLECTION_NAME, vectors_config=vector_params)
-    print(f"📦 Created collection: {COLLECTION_NAME}")
+    qdrant_client.create_collection(collection_name="sellart_artworks", vectors_config=vector_params)
+    print(f"📦 Created collection: {"sellart_artworks"}")
 
     # Création de l'index et persistance
-    vector_store = QdrantVectorStore(client=qdrant_client, collection_name=COLLECTION_NAME)
+    vector_store = QdrantVectorStore(client=qdrant_client, collection_name="sellart_artworks")
     storage_context = StorageContext.from_defaults(vector_store=vector_store)
 
     index = VectorStoreIndex.from_documents(
