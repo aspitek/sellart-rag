@@ -41,7 +41,7 @@ index = load_index_from_storage(storage_context=storage_context, embed_model=emb
 retriever = index.as_retriever(similarity_top_k=5)
 
 # CHANGED: Initialize OpenAI LLM instead of Ollama
-llm = OpenAI(api_key="***REMOVED***", model="gpt-4o-mini")  # e.g., OPENAI_MODEL = "gpt-3.5-turbo"
+llm = OpenAI(api_key=OPENAI_API_KEY, model=OPENAI_MODEL)  # e.g., OPENAI_MODEL = "gpt-3.5-turbo"
 
 # === Fonctions mémoire Redis ===
 def get_user_memory(user_id: str) -> ChatMemoryBuffer:
@@ -75,7 +75,7 @@ async def stream_chat_response(input: ChatInput) -> AsyncGenerator[str, None]:
         print(f"Memory for user {input.user_id}: {memory.get_all()}")
         
         # CHANGED: Configure OpenAI for streaming
-        streaming_llm = OpenAI(api_key="***REMOVED***", model="gpt-4o-mini", stream=True)
+        streaming_llm = OpenAI(api_key=OPENAI_API_KEY, model=OPENAI_MODEL, stream=True)
         
         chat_engine = ContextChatEngine.from_defaults(
             llm=streaming_llm, retriever=retriever, memory=memory
