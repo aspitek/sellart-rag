@@ -12,3 +12,5 @@ wheels/
 
 openai.key
 docker-compose.yml
+./docker-compose.yml
+
