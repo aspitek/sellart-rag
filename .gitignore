@@ -11,3 +11,4 @@ wheels/
 .env
 
 openai.key
+docker-compose.yml
