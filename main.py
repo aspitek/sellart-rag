@@ -12,6 +12,7 @@ from llama_index.core.memory import ChatMemoryBuffer
 from llama_index.core.chat_engine import ContextChatEngine
 from llama_index.core.base.llms.types import ChatMessage
 from qdrant_client import QdrantClient
+from openai import OpenAI as OpenAIClient
 import redis
 import json
 import asyncio
@@ -46,13 +47,15 @@ index = load_index_from_storage(storage_context=storage_context, embed_model=emb
 # Récupérer plus de documents
 retriever = index.as_retriever(similarity_top_k=7)
 
+openai_client = OpenAIClient(api_key=OPENAI_API_KEY)
+
 AFRO_CENTRIC_SYSTEM_PROMPT = """
 You are an AI curator for an online African art gallery, deeply knowledgeable about African art, culture, and history.
 Use *only* the context from the retrieved documents to answer questions. Do not invent facts.
 Focus on African art, its cultural significance, historical context, and contemporary expressions.
 Respond warmly.
+Use FCFA as the currency for prices.
 Use the user's language when possible, and be grammatically precise.
-For questions about evolution or history, provide a response with scientific rigor with proof like statistics, dates, and events etc.
 """
 
 # === Cross-encoder reranker setup ===
@@ -112,8 +115,13 @@ async def summarize_memory(memory: ChatMemoryBuffer, llm: OpenAI) -> str:
         f"Conversation:\n{convo_text}\n\nRésumé:"
     )
     try:
-        response = llm.chat(prompt)
-        return str(response).strip()
+        response = openai_client.responses.create(
+            model=OPENAI_MODEL,
+            tools=[{"type": "web_search_preview"}],
+            input=prompt
+        )
+        answer = str(response.output_text).strip().lower()
+        return answer
     except Exception as e:
         print(f"Erreur lors du résumé: {e}")
         return convo_text  # fallback
@@ -169,21 +177,31 @@ class ChatInput(BaseModel):
     message: str
     user_id: str
 
-# === Streaming chat response avec résumé automatique & logs ===
-# ... [imports identiques jusqu'à ici]
 
 # === Fonction de routage via prompt OpenAI ===
-async def determine_routing_via_prompt(query: str, llm: OpenAI) -> str:
-    prompt = (
+async def determine_routing_via_prompt(memory: ChatMemoryBuffer, new_question: str, llm: OpenAI) -> str:
+    """
+    Utilise l'historique de conversation + la question actuelle pour déterminer si on route vers RAG ou WebSearch.
+    """
+    context = "\n".join([f"{m.role}: {m.content}" for m in memory.get_all()])
+    full_prompt = (
         "Tu es un assistant intelligent pour un moteur RAG spécialisé en art africain.\n"
-        "On te donne une question utilisateur. Tu dois dire si elle peut être répondue avec des documents de la base de données (réponds 'rag'),\n"
-        "ou si elle nécessite une recherche sur internet (réponds 'websearch').\n"
-        "Sois conservateur — si tu n'es pas sûr, choisis 'websearch'.\n"
-        f"Question: {query}\nRéponse (juste 'rag' ou 'websearch'):"
+        "Voici l'historique de la conversation entre un utilisateur et l'assistant :\n"
+        f"{context}\n\n"
+        "L'utilisateur pose maintenant la question suivante :\n"
+        f"{new_question}\n\n"
+        "Dois-tu utiliser la base de documents (réponds 'rag') ou effectuer une recherche sur Internet (réponds 'websearch') ?\n"
+        "Sois conservateur — si tu n'es pas sûr que la base de documents suffise, choisis 'websearch'.\n"
+        "Réponse (juste 'rag' ou 'websearch') :"
     )
     try:
-        result = llm.chat(prompt)
-        answer = str(result).strip().lower()
+        
+        response = openai_client.responses.create(
+            model=OPENAI_MODEL,
+            tools=[{"type": "web_search_preview"}],
+            input=full_prompt
+        )
+        answer = str(response.output_text).strip().lower()
         if "web" in answer:
             return "websearch"
         return "rag"
@@ -196,11 +214,17 @@ async def fallback_web_search_answer(query: str, llm: OpenAI) -> str:
     prompt = (
         "Tu es un assistant intelligent qui répond à la question suivante en simulant une recherche web.\n"
         "Base ta réponse sur des faits disponibles publiquement jusqu'à 2024 et donne des informations crédibles.\n"
+        "retire les liens de ta reponse mais insere les references tout en gardant une reponse professionelle.\n"
         f"Question: {query}\nRéponse:"
     )
     try:
-        result = llm.chat(prompt)
-        return str(result).strip()
+        
+        response = openai_client.responses.create(
+            model=OPENAI_MODEL,
+            tools=[{"type": "web_search_preview"}],
+            input=prompt
+        )
+        return response.output_text.strip()
     except Exception as e:
         print(f"Erreur web search fallback: {e}")
         return "Je suis désolé, je ne peux pas répondre pour le moment."
@@ -217,7 +241,7 @@ async def stream_chat_response(input: ChatInput) -> AsyncGenerator[str, None]:
             update_memory_with_summary(memory, summary)
 
         llm_router = OpenAI(api_key=OPENAI_API_KEY, model=OPENAI_MODEL, temperature=0.0)
-        routing = await determine_routing_via_prompt(input.message, llm_router)
+        routing = await determine_routing_via_prompt(memory, input.message, llm_router)
         print(f"Routing decision for user {input.user_id}: {routing}")
 
         if routing == "websearch":
@@ -270,7 +294,7 @@ async def chat(input: ChatInput):
             update_memory_with_summary(memory, summary)
 
         llm_router = OpenAI(api_key=OPENAI_API_KEY, model=OPENAI_MODEL, temperature=0.0)
-        routing = await determine_routing_via_prompt(input.message, llm_router)
+        routing = await determine_routing_via_prompt(memory, input.message, llm_router)
         print(f"Routing decision: {routing}")
 
         if routing == "websearch":
