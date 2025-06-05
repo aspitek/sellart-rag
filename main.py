@@ -16,6 +16,7 @@ from openai import OpenAI as OpenAIClient
 import redis
 import json
 import asyncio
+from collections.abc import AsyncIterator
 import traceback
 from typing import AsyncGenerator, List, Tuple
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
@@ -115,12 +116,13 @@ async def summarize_memory(memory: ChatMemoryBuffer, llm: OpenAI) -> str:
         f"Conversation:\n{convo_text}\n\nRésumé:"
     )
     try:
-        response = openai_client.responses.create(
+        response = openai_client.chat.completions.create(
             model=OPENAI_MODEL,
-            tools=[{"type": "web_search_preview"}],
-            input=prompt
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.0,
+            max_tokens=300
         )
-        answer = str(response.output_text).strip().lower()
+        answer = response.choices[0].message.content.strip()
         return answer
     except Exception as e:
         print(f"Erreur lors du résumé: {e}")
@@ -177,7 +179,6 @@ class ChatInput(BaseModel):
     message: str
     user_id: str
 
-
 # === Fonction de routage via prompt OpenAI ===
 async def determine_routing_via_prompt(memory: ChatMemoryBuffer, new_question: str, llm: OpenAI) -> str:
     """
@@ -195,13 +196,13 @@ async def determine_routing_via_prompt(memory: ChatMemoryBuffer, new_question: s
         "Réponse (juste 'rag' ou 'websearch') :"
     )
     try:
-        
-        response = openai_client.responses.create(
+        response = openai_client.chat.completions.create(
             model=OPENAI_MODEL,
-            tools=[{"type": "web_search_preview"}],
-            input=full_prompt
+            messages=[{"role": "user", "content": full_prompt}],
+            temperature=0.0,
+            max_tokens=10
         )
-        answer = str(response.output_text).strip().lower()
+        answer = response.choices[0].message.content.strip().lower()
         if "web" in answer:
             return "websearch"
         return "rag"
@@ -210,7 +211,10 @@ async def determine_routing_via_prompt(memory: ChatMemoryBuffer, new_question: s
         return "rag"  # fallback
 
 # === Web search fallback simple (dummy) ===
-async def fallback_web_search_answer(query: str, llm: OpenAI) -> str:
+async def fallback_web_search_answer(query: str, llm: OpenAI) -> AsyncGenerator[str, None]:
+    """
+    Version streaming de la recherche web fallback
+    """
     prompt = (
         "Tu es un assistant intelligent qui répond à la question suivante en simulant une recherche web.\n"
         "Base ta réponse sur des faits disponibles publiquement jusqu'à 2024 et donne des informations crédibles.\n"
@@ -218,69 +222,101 @@ async def fallback_web_search_answer(query: str, llm: OpenAI) -> str:
         f"Question: {query}\nRéponse:"
     )
     try:
-        
-        response = openai_client.responses.create(
+        response = openai_client.chat.completions.create(
             model=OPENAI_MODEL,
-            tools=[{"type": "web_search_preview"}],
-            input=prompt
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.3,
+            max_tokens=512,
+            stream=True
         )
-        return response.output_text.strip()
+        
+        for chunk in response:
+            if chunk.choices[0].delta.content:
+                yield chunk.choices[0].delta.content
+                
     except Exception as e:
         print(f"Erreur web search fallback: {e}")
-        return "Je suis désolé, je ne peux pas répondre pour le moment."
+        yield "Je suis désolé, je ne peux pas répondre pour le moment."
 
-# === Streaming chat response avec routage ===
+# === Streaming chat response avec routage UNIFIÉ ===
 async def stream_chat_response(input: ChatInput) -> AsyncGenerator[str, None]:
     try:
         memory = get_user_memory(input.user_id)
         print(f"Memory size for user {input.user_id}: {len(memory.get_all())} messages")
 
+        # Résumé automatique si nécessaire
         if len(memory.get_all()) > 20:
             llm_summary = OpenAI(api_key=OPENAI_API_KEY, model=OPENAI_MODEL)
             summary = await summarize_memory(memory, llm_summary)
             update_memory_with_summary(memory, summary)
 
+        # Déterminer le routage
         llm_router = OpenAI(api_key=OPENAI_API_KEY, model=OPENAI_MODEL, temperature=0.0)
         routing = await determine_routing_via_prompt(memory, input.message, llm_router)
         print(f"Routing decision for user {input.user_id}: {routing}")
 
-        if routing == "websearch":
-            answer = await fallback_web_search_answer(input.message, llm_router)
-            yield json.dumps({"text": answer})
-            memory.put(ChatMessage(role="user", content=input.message))
-            memory.put(ChatMessage(role="assistant", content=answer))
-            save_user_memory(input.user_id, memory)
-            yield "\n[END_OF_RESPONSE]"
-            return
-
-        chat_engine = create_chat_engine(memory, streaming=True)
-        streaming_response = chat_engine.stream_chat(input.message)
         complete_response = ""
 
-        if hasattr(streaming_response, 'response_gen'):
-            async for token in streaming_response.response_gen:
+        # === FORMAT UNIFIÉ POUR TOUS LES TYPES DE RÉPONSE ===
+        if routing == "websearch":
+            # Streaming web search
+            async for token in fallback_web_search_answer(input.message, llm_router):
                 if token:
                     complete_response += token
                     yield f"data: {json.dumps({'text': token})}\n\n"
         else:
-            response_text = str(streaming_response)
-            complete_response = response_text
-            yield f"data: {json.dumps({'text': response_text})}\n\n"
+            # Streaming RAG
+            chat_engine = create_chat_engine(memory, streaming=True)
+            streaming_response = chat_engine.stream_chat(input.message)
 
+            if hasattr(streaming_response, 'response_gen'):
+                if isinstance(streaming_response.response_gen, AsyncIterator):
+                    async for token in streaming_response.response_gen:
+                        if token:
+                            complete_response += token
+                            yield f"data: {json.dumps({'text': token})}\n\n"
+                else:
+                    for token in streaming_response.response_gen:
+                        if token:
+                            complete_response += token
+                            yield f"data: {json.dumps({'text': token})}\n\n"
+            else:
+                # Fallback si pas de streaming
+                response_text = str(streaming_response)
+                complete_response = response_text
+                # Simuler le streaming en envoyant par chunks
+                chunk_size = 50
+                for i in range(0, len(response_text), chunk_size):
+                    chunk = response_text[i:i+chunk_size]
+                    yield f"data: {json.dumps({'text': chunk})}\n\n"
+                    await asyncio.sleep(0.05)  # Petit délai pour simuler le streaming
+
+        # Sauvegarder la conversation
         memory.put(ChatMessage(role="user", content=input.message))
         memory.put(ChatMessage(role="assistant", content=complete_response))
         save_user_memory(input.user_id, memory)
+        
+        # Signal de fin unifié
         yield "data: [DONE]\n\n"
 
     except Exception as e:
         error_msg = f"Streaming chat failed: {str(e)}"
         print(traceback.format_exc())
         yield f"data: {json.dumps({'error': error_msg})}\n\n"
+        yield "data: [DONE]\n\n"
 
 # === Endpoint streaming avec routage ===
 @app.post("/chat/stream")
 async def chat_stream(input: ChatInput):
-    return StreamingResponse(stream_chat_response(input), media_type="text/event-stream")
+    return StreamingResponse(
+        stream_chat_response(input), 
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "Access-Control-Allow-Origin": "*",
+        }
+    )
 
 # === Endpoint non-streaming avec routage ===
 @app.post("/chat")
@@ -298,7 +334,11 @@ async def chat(input: ChatInput):
         print(f"Routing decision: {routing}")
 
         if routing == "websearch":
-            answer = await fallback_web_search_answer(input.message, llm_router)
+            # Collecter toute la réponse web search
+            answer = ""
+            async for token in fallback_web_search_answer(input.message, llm_router):
+                answer += token
+            
             memory.put(ChatMessage(role="user", content=input.message))
             memory.put(ChatMessage(role="assistant", content=answer))
             save_user_memory(input.user_id, memory)
