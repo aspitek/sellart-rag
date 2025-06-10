@@ -54,8 +54,23 @@ AFRO_CENTRIC_SYSTEM_PROMPT = """
 You are an AI curator for an online African art gallery, deeply knowledgeable about African art, culture, and history.
 Use *only* the context from the retrieved documents to answer questions. Do not invent facts.
 Focus on African art, its cultural significance, historical context, and contemporary expressions.
-Respond warmly.
-Use FCFA as the currency for prices.
+Respond warmly and professionally.
+
+IMPORTANT CURRENCY RULES:
+- Always use CFA Francs (FCFA) as the primary and ONLY currency for all prices
+- NEVER convert prices to other currencies (EUR, USD, etc.)
+- NEVER show conversions like "X EUR (approximately Y FCFA)"
+- Simply state prices directly in FCFA format: "Price: 500,000 FCFA" or "500 000 FCFA"
+- If original data contains other currencies, convert mentally to FCFA and present only the FCFA amount
+
+RESPONSE LENGTH GUIDELINES:
+- Keep responses comprehensive but well-structured
+- Use clear paragraphs and sections
+- Avoid extremely long single paragraphs
+- Break down complex information into digestible chunks
+- Aim for completeness while maintaining readability
+- Use bullet points or numbered lists when appropriate for clarity
+
 Use the user's language when possible, and be grammatically precise.
 """
 
@@ -155,7 +170,7 @@ def create_chat_engine(memory: ChatMemoryBuffer, streaming: bool = False) -> Con
         api_key=OPENAI_API_KEY,
         model=OPENAI_MODEL,
         temperature=0.0,
-        max_tokens=512,
+        max_tokens=800,  # Augmenté pour éviter les coupures
         top_p=1.0,
         frequency_penalty=0.0,
         presence_penalty=0.0,
@@ -218,7 +233,10 @@ async def fallback_web_search_answer(query: str, llm: OpenAI) -> AsyncGenerator[
     prompt = (
         "Tu es un assistant intelligent qui répond à la question suivante en simulant une recherche web.\n"
         "Base ta réponse sur des faits disponibles publiquement jusqu'à 2024 et donne des informations crédibles.\n"
-        "retire les liens de ta reponse mais insere les references tout en gardant une reponse professionelle.\n"
+        "IMPORTANT: Utilise UNIQUEMENT les francs CFA (FCFA) pour tous les prix. Ne montre JAMAIS de conversions.\n"
+        "Retire les liens de ta réponse mais insère les références tout en gardant une réponse professionnelle.\n"
+        "Structure ta réponse en paragraphes clairs et évite les réponses trop longues d'un seul bloc.\n"
+        "Ramène la réponse de façon complète mais bien organisée.\n"
         f"Question: {query}\nRéponse:"
     )
     try:
@@ -226,7 +244,7 @@ async def fallback_web_search_answer(query: str, llm: OpenAI) -> AsyncGenerator[
             model=OPENAI_MODEL,
             messages=[{"role": "user", "content": prompt}],
             temperature=0.3,
-            max_tokens=512,
+            max_tokens=800,  # Augmenté pour éviter les coupures
             stream=True
         )
         
@@ -284,12 +302,12 @@ async def stream_chat_response(input: ChatInput) -> AsyncGenerator[str, None]:
                 # Fallback si pas de streaming
                 response_text = str(streaming_response)
                 complete_response = response_text
-                # Simuler le streaming en envoyant par chunks
-                chunk_size = 50
+                # Simuler le streaming en envoyant par chunks plus petits pour éviter les coupures
+                chunk_size = 30  # Réduit pour un streaming plus fluide
                 for i in range(0, len(response_text), chunk_size):
                     chunk = response_text[i:i+chunk_size]
                     yield f"data: {json.dumps({'text': chunk})}\n\n"
-                    await asyncio.sleep(0.05)  # Petit délai pour simuler le streaming
+                    await asyncio.sleep(0.03)  # Délai réduit
 
         # Sauvegarder la conversation
         memory.put(ChatMessage(role="user", content=input.message))
